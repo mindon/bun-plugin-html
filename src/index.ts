@@ -4,6 +4,9 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path, { resolve } from 'node:path';
+import * as esbuild from 'esbuild';
+import { minifyHTMLLiterals } from 'minify-html-literals';
+
 import {
 	type BuildArtifact,
 	type BuildConfig,
@@ -403,6 +406,7 @@ async function forJsFiles(
 					(plugin) => plugin.name !== 'bun-plugin-html',
 				),
 			],
+			minify: false,
 			root: build.config.root || commonPath,
 		});
 
@@ -411,7 +415,28 @@ async function forJsFiles(
 		}
 
 		for (const output of result.outputs) {
-			const outputText = await output.text();
+			let outputText = await output.text();
+			if (/\.js$/.test(output.path)) {
+				if (/css\`|html\`/.test(outputText)) {
+					const result = minifyHTMLLiterals(outputText);
+					outputText = result?.code || outputText;
+				}
+
+				if (build.config.minify) {
+					try {
+						const result = await esbuild.transform(outputText, {
+							loader: 'js',
+							format: 'esm',
+							target: build.config.target === 'browser' ? 'chrome80' : 'node',
+							minify: true,
+						});
+						if (result.code) outputText = result.code;
+					} catch (err) {
+						console.error(err);
+					}
+				}
+			}
+
 			let filePath = path.resolve(`${commonPath}/${output.path}`);
 			if (filePath.includes(tempDirPath)) {
 				filePath = filePath.replace(`/private${tempDirPath}`, commonPath);
