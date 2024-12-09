@@ -427,10 +427,11 @@ async function forJsFiles(
 						const result = await esbuild.transform(outputText, {
 							loader: 'js',
 							format: 'esm',
-							target: build.config.target === 'browser' ? 'chrome80' : 'node',
+							target: build.config.target !== 'node' ? 'chrome80' : 'node22',
 							minify: true,
 						});
 						if (result.code) outputText = result.code;
+						else console.warn(result);
 					} catch (err) {
 						console.error(err);
 					}
