@@ -11,18 +11,24 @@
 @tailwind components;
 @tailwind utilities;
 </style>
-	<link rel="icon" type="image/x-icon" href="./images/favicon.ico">
+	<link rel="icon" type="image/x-icon" href="images/favicon.ico">
 	<title>Hello World!</title>
 </head>
 <body>
 	<h1>Hello World</h1>
-	<img src="./images/shubham-dhage-unsplash.jpg" width="100px" />
+	<img src="images/shubham-dhage-unsplash.jpg" width="100px" />
 	<div class="bg-white text-black">
 		<p id="js-target">This should be changed by JS</p>
 		<p id="cljs-target">This should be changed by CLJS</p>
 	</div>
-	<script>// test/starting/main.ts
+	<script>// /Users/bjorn/Documents/GitHub/bun-plugin-html/test/starting/js/index.ts
+function fromJs() {
+  console.log("from js/index.ts");
+}
+
+// test/starting/main.ts
 console.log("Running JS for browser");
+fromJs();
 document.querySelector("#js-target").innerHTML = "Changed!";
 </script>
 	<script>var __create = Object.create;
@@ -23700,5 +23706,5 @@ function App() {
   }, undefined, false, undefined, this);
 }
 </script>
-	<script src="./js/build-custom.cljs"></script>
+	<script src="js/build-custom.cljs"></script>
 </body>

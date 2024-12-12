@@ -126,8 +126,8 @@ async function getAllFiles(
 	const files: File[] = [];
 	const rewriter = new HTMLRewriter();
 
-	const resolvedPath = path.resolve(filePath);
-	const originalFile = Bun.file(resolvedPath);
+	const htmlResolvedPath = path.resolve(filePath);
+	const originalFile = Bun.file(htmlResolvedPath);
 	let fileText = await originalFile.text();
 
 	const hash = Bun.hash(fileText, 1).toString(16).slice(0, 8);
@@ -137,7 +137,8 @@ async function getAllFiles(
 		details: {
 			kind: 'entry-point',
 			hash,
-			originalPath: resolvedPath,
+			originalPath: htmlResolvedPath,
+			htmlImporter: htmlResolvedPath,
 		},
 	});
 
@@ -196,6 +197,7 @@ async function getAllFiles(
 					},
 					hash,
 					originalPath: resolvedPath,
+					htmlImporter: htmlResolvedPath,
 				},
 			});
 		},
@@ -274,9 +276,19 @@ async function forJsFiles(
 	build: PluginBuilder,
 	files: Map<BunFile, FileDetails>,
 	buildExtensions: readonly string[],
+	htmlOptions: HTMLTerserOptions,
 ) {
 	const jsFiles = getExtensionFiles(files, buildExtensions);
 	for (const item of jsFiles) files.delete(item.file);
+
+	if (build.config.experimentalCss) {
+		const cssFiles = await forStyleFiles(options, build, htmlOptions, files);
+		if (cssFiles) {
+			for (const file of cssFiles) {
+				jsFiles.push(file);
+			}
+		}
+	}
 
 	if (!jsFiles) return;
 
@@ -350,12 +362,25 @@ async function forJsFiles(
 							resolved = Bun.resolveSync(args.path, options.pathToResolveFrom);
 						} else {
 							resolved = path.resolve(args.importer, '../', args.path);
-							if (
-								!isModule &&
-								(await fs.exists(resolved)) &&
-								(await fs.lstat(resolved)).isDirectory()
-							)
-								resolved = Bun.resolveSync(args.path, resolved);
+
+							const exists = await fs.exists(resolved);
+
+							if (!isModule) {
+								if (exists) {
+									if ((await fs.lstat(resolved)).isDirectory()) {
+										if (requiresTempDir)
+											resolved = Bun.resolveSync(args.path, originalPath);
+										else resolved = Bun.resolveSync('.', resolved);
+									} else {
+										resolved = Bun.resolveSync(
+											args.path,
+											path.parse(args.importer).dir,
+										);
+									}
+								} else {
+									resolved = Bun.resolveSync('.', resolved);
+								}
+							}
 
 							if (build.config.splitting) {
 								external = true;
@@ -444,7 +469,7 @@ async function forJsFiles(
 				filePath = filePath.replace(tempDirPath, commonPath);
 			}
 
-			if (output.kind === 'entry-point') {
+			if (output.kind === 'entry-point' || output.loader === 'css') {
 				if (!jsFiles[index].file.name) continue;
 				entrypointToOutput.set(jsFiles[index].file.name, filePath);
 				files.set(Bun.file(filePath), {
@@ -453,6 +478,7 @@ async function forJsFiles(
 					kind: jsFiles[index].details.kind,
 					hash: output.hash || Bun.hash(outputText, 1).toString(16).slice(0, 8),
 					originalPath: jsFiles[index].details.originalPath,
+					htmlImporter: jsFiles[index].details.htmlImporter,
 				});
 			} else {
 				files.set(Bun.file(filePath), {
@@ -460,6 +486,7 @@ async function forJsFiles(
 					kind: output.kind,
 					hash: output.hash || Bun.hash(outputText, 1).toString(16).slice(0, 8),
 					originalPath: false,
+					htmlImporter: jsFiles[index].details.htmlImporter,
 				});
 			}
 		}
@@ -502,14 +529,20 @@ async function forStyleFiles(
 		} else {
 			content = cssMinifier(content);
 		}
-		files.set(file, {
-			content,
-			attribute: item.details.attribute,
-			kind: item.details.kind,
-			hash: Bun.hash(content, 1).toString(16).slice(0, 8),
-			originalPath: originalPath,
-		});
+
+		if (!build.config.experimentalCss)
+			files.set(file, {
+				content,
+				attribute: item.details.attribute,
+				kind: item.details.kind,
+				hash: Bun.hash(content, 1).toString(16).slice(0, 8),
+				originalPath: originalPath,
+				htmlImporter: item.details.htmlImporter,
+			});
+		else files.delete(file);
 	}
+
+	if (build.config.experimentalCss) return cssFiles;
 }
 
 interface NamedAs {
@@ -537,7 +570,10 @@ async function processHtmlFiles(
 	buildExtensions: readonly string[],
 ) {
 	const htmlFiles = getExtensionFiles(files, ['.html', '.htm']);
-	const toChangeAttributes: ((rewriter: HTMLRewriter) => void)[] = [];
+	const toChangeAttributes: ((
+		rewriter: HTMLRewriter,
+		fileLocation: string,
+	) => void)[] = [];
 
 	if (!htmlFiles) return toChangeAttributes;
 
@@ -800,8 +836,10 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 				files = processor.export();
 			}
 
-			await forJsFiles(options, build, files, buildExtensions);
-			await forStyleFiles(options, build, htmlOptions, files);
+			await forJsFiles(options, build, files, buildExtensions, htmlOptions);
+			if (!build.config.experimentalCss)
+				await forStyleFiles(options, build, htmlOptions, files);
+
 			const attributesToChange = await processHtmlFiles(
 				options,
 				build,
@@ -840,6 +878,7 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 							kind: details.kind,
 							hash: details.hash,
 							originalPath: details.originalPath,
+							htmlImporter: details.htmlImporter,
 						},
 					]);
 					continue;
@@ -866,6 +905,7 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 						kind: details.kind,
 						hash: details.hash,
 						originalPath: details.originalPath,
+						htmlImporter: details.htmlImporter,
 					},
 				]);
 			}
@@ -892,15 +932,21 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 				const selector = attributeToSelector(attribute);
 				const extension = path.parse(file.name).ext;
 
-				attributesToChange.push((rewriter) => {
+				attributesToChange.push((rewriter, fileLocation) => {
 					rewriter.on(selector, {
 						element(el) {
 							if (el.getAttribute(attribute.name) === null || !file.name)
 								return;
-							let path = removeCommonPath(file.name, commonPathOutput);
+
+							let filePath = path.relative(
+								path.dirname(fileLocation),
+								file.name,
+							);
+
 							if (buildExtensions.includes(extension))
-								path = changeFileExtension(path, '.js');
-							el.setAttribute(attribute.name, `./${path}`);
+								filePath = changeFileExtension(filePath, '.js');
+
+							el.setAttribute(attribute.name, filePath);
 						},
 					});
 				});
@@ -911,7 +957,8 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 			)) {
 				let fileContents = await contentToString(details.content);
 				const rewriter = new HTMLRewriter();
-				for (const item of attributesToChange) item(rewriter);
+				for (const item of attributesToChange)
+					item(rewriter, file.name as string);
 				fileContents = rewriter.transform(fileContents);
 				fileContents = build.config.minify
 					? await minify(fileContents, htmlOptions)
