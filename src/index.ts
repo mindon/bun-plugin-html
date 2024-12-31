@@ -920,9 +920,12 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 			for (const [file, details] of newFiles.filter(
 				([file, details]) => details.kind !== 'entry-point',
 			)) {
-				if (!file.name || !details.content) continue;
+				const { name } = file;
+				if (!name || !details.content) continue;
+				if (name.indexOf(details.hash) > -1 && (await fs.exists(name)))
+					continue;
 				await save(
-					file.name,
+					name,
 					details.content,
 					{
 						createPath: true,
@@ -933,7 +936,7 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 				if (!details.attribute) continue;
 				const attribute = details.attribute;
 				const selector = attributeToSelector(attribute);
-				const extension = path.parse(file.name).ext;
+				const extension = path.parse(name).ext;
 
 				attributesToChange.push((rewriter, fileLocation) => {
 					rewriter.on(selector, {
@@ -967,9 +970,12 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 					? await minify(fileContents, htmlOptions)
 					: fileContents;
 
-				if (!file.name) continue;
+				const { name } = file;
+				if (!name || !fileContents) continue;
+				if (name.indexOf(details.hash) > -1 && (await fs.exists(name)))
+					continue;
 				await save(
-					file.name,
+					name,
 					fileContents,
 					{
 						createPath: true,
