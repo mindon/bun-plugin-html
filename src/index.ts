@@ -62,7 +62,7 @@ export type BunPluginHTMLOptions = {
 	/**
 	 * Choose how the content is minified, if `Bun.build({ minify: true })` is set.
 	 */
-	minifyOptions?: HTMLTerserOptions;
+	minifyOptions?: HtmlMinifyOptions;
 	/**
 	 * Choose what extensions to include in building of javascript files with `Bun.build`.
 	 *
@@ -88,6 +88,11 @@ export type BunPluginHTMLOptions = {
 	 * - If omitted or `false`, all paths are replaced by default.
 	 */
 	keepOriginalPaths?: boolean | string[];
+	/**
+	 * Whether or not to suppress errors from being logged when building. Useful for when you know what
+	 * you are doing works, but are still getting errors. `true` means that the errors won't be logged.
+	 */
+	suppressErrors?: boolean;
 };
 
 const attributesToSearch = [
@@ -105,12 +110,17 @@ const extensionsToBuild: readonly string[] = [
 	'.tsx',
 ] as const;
 const selectorsToExclude: readonly string[] = ['a'] as const;
-export const defaultMinifyOptions: HTMLTerserOptions = {
+
+export type HtmlMinifyOptions = HTMLTerserOptions & {
+	minifyHTML?: boolean;
+};
+export const defaultMinifyOptions: HtmlMinifyOptions = {
 	collapseWhitespace: true,
 	collapseInlineTagWhitespace: true,
 	caseSensitive: true,
 	minifyCSS: {},
 	minifyJS: true,
+	minifyHTML: true,
 	removeComments: true,
 	removeRedundantAttributes: true,
 } as const;
@@ -178,12 +188,14 @@ async function getAllFiles(
 					) +
 					`${line}`.length +
 					1;
-				console.log(getLines(fileText, 4, line + 1));
-				console.log('^'.padStart(columnNumber));
-				console.error(
-					`HTMLParseError: Specified <${el.tagName}> ${attributeName} '${attributeValue}' does not exist!`,
-				);
-				console.log(`	  at ${filePath}:${line}:${columnNumber}`);
+				if (options?.suppressErrors !== true) {
+					console.log(getLines(fileText, 4, line + 1));
+					console.log('^'.padStart(columnNumber));
+					console.error(
+						`bun-plugin-html - HTMLParseError: Specified <${el.tagName}> ${attributeName} '${attributeValue}' does not exist!`,
+					);
+					console.log(`	  at ${filePath}:${line}:${columnNumber}`);
+				}
 				return;
 			}
 
@@ -226,7 +238,7 @@ function getExtensionFiles(
 
 function getCSSMinifier(
 	config: BuildConfig,
-	options: HTMLTerserOptions,
+	options: HtmlMinifyOptions,
 ): (text: string) => string {
 	if (config.minify && options.minifyCSS !== false) {
 		if (typeof options.minifyCSS === 'function') {
@@ -253,7 +265,7 @@ function getCSSMinifier(
 
 function getJSMinifier(
 	config: BuildConfig,
-	options: HTMLTerserOptions,
+	options: HtmlMinifyOptions,
 ): (text: string) => Promise<string> {
 	const noop = async (text: string) => text;
 	if (config.minify) {
@@ -276,7 +288,7 @@ async function forJsFiles(
 	build: PluginBuilder,
 	files: Map<BunFile, FileDetails>,
 	buildExtensions: readonly string[],
-	htmlOptions: HTMLTerserOptions,
+	htmlOptions: HtmlMinifyOptions,
 ) {
 	const jsFiles = getExtensionFiles(files, buildExtensions);
 	for (const item of jsFiles) files.delete(item.file);
@@ -333,7 +345,7 @@ async function forJsFiles(
 		resolved: string;
 	}[] = [];
 
-	const customResolver = (options: {
+	const customResolver = (resolverOptions: {
 		pathToResolveFrom: string;
 	}): BunPlugin => {
 		return {
@@ -347,7 +359,7 @@ async function forJsFiles(
 						const tempPath = path.resolve(tempDirPath, args.path);
 						const originalPath = path.resolve(
 							args.path,
-							options.pathToResolveFrom,
+							resolverOptions.pathToResolveFrom,
 						);
 
 						// Check if the path is a module
@@ -359,7 +371,10 @@ async function forJsFiles(
 						if (await Bun.file(tempPath).exists()) {
 							resolved = Bun.resolveSync(args.path, tempDirPath);
 						} else if (isModule || (await Bun.file(originalPath).exists())) {
-							resolved = Bun.resolveSync(args.path, options.pathToResolveFrom);
+							resolved = Bun.resolveSync(
+								args.path,
+								resolverOptions.pathToResolveFrom,
+							);
 						} else {
 							resolved = path.resolve(args.importer, '../', args.path);
 
@@ -398,12 +413,16 @@ async function forJsFiles(
 							external,
 						};
 					} catch (error) {
-						console.error('Error during module resolution:');
-						console.error('Potential reasons:');
-						console.error('- Missing file in specified paths');
-						console.error('- Invalid file type (non-JS file)');
-						console.error('If unresolved, please report to `bun-plugin-html`.');
-						console.error(error);
+						if (options?.suppressErrors !== true) {
+							console.error('Error during module resolution:');
+							console.error('Potential reasons:');
+							console.error('- Missing file in specified paths');
+							console.error('- Invalid file type (non-JS file)');
+							console.error(
+								'If unresolved, please report to `bun-plugin-html`.',
+							);
+							console.error(error);
+						}
 
 						// Return an empty path to prevent build failure
 						return {
@@ -435,7 +454,7 @@ async function forJsFiles(
 			root: build.config.root || commonPath,
 		});
 
-		if (!result.success) {
+		if (!result.success && options?.suppressErrors !== true) {
 			console.error(result.logs);
 		}
 
@@ -511,7 +530,7 @@ async function forJsFiles(
 async function forStyleFiles(
 	options: BunPluginHTMLOptions | undefined,
 	build: PluginBuilder,
-	htmlOptions: HTMLTerserOptions,
+	htmlOptions: HtmlMinifyOptions,
 	files: Map<BunFile, FileDetails>,
 ) {
 	const cssMinifier = getCSSMinifier(build.config, htmlOptions);
@@ -966,9 +985,10 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 				for (const item of attributesToChange)
 					item(rewriter, file.name as string);
 				fileContents = rewriter.transform(fileContents);
-				fileContents = build.config.minify
-					? await minify(fileContents, htmlOptions)
-					: fileContents;
+				fileContents =
+					build.config.minify && htmlOptions.minifyHTML
+						? await minify(fileContents, htmlOptions)
+						: fileContents;
 
 				const { name } = file;
 				if (!name || !fileContents) continue;
