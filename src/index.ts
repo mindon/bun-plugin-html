@@ -599,75 +599,74 @@ async function processHtmlFiles(
 	for (const htmlFile of htmlFiles) {
 		for (const [file, details] of files) {
 			const attribute = details.attribute;
-			if (attribute) {
-				const selector = attributeToSelector(attribute);
+			if (!attribute) continue;
+			const selector = attributeToSelector(attribute);
 
-				if (!file.name) continue;
-				const extension = path.parse(file.name).ext;
+			if (!file.name) continue;
+			const extension = path.parse(file.name).ext;
 
-				if (/\.(c|s[ac])ss$/i.test(extension)) {
-					if (
-						options &&
-						(options.inline === true ||
-							(typeof options.inline === 'object' &&
-								options.inline?.css === true))
-					) {
-						files.delete(file);
-						toChangeAttributes.push((rewriter: HTMLRewriter) => {
-							rewriter.on(selector, {
-								async element(el) {
-									let content =
-										(await contentToString(details.content)) ||
-										(await file.text());
-									if (/\.s[ac]ss$/i.test(extension)) {
-										content = sass.compileString(content).css;
-									}
-									el.replace(`<style>${content}</style>`, {
-										html: true,
-									});
-								},
-							});
+			if (/\.(c|s[ac])ss$/i.test(extension)) {
+				if (
+					options &&
+					(options.inline === true ||
+						(typeof options.inline === 'object' &&
+							options.inline?.css === true))
+				) {
+					files.delete(file);
+					toChangeAttributes.push((rewriter: HTMLRewriter) => {
+						rewriter.on(selector, {
+							async element(el) {
+								let content =
+									(await contentToString(details.content)) ||
+									(await file.text());
+								if (/\.s[ac]ss$/i.test(extension)) {
+									content = sass.compileString(content).css;
+								}
+								el.replace(`<style>${content}</style>`, {
+									html: true,
+								});
+							},
 						});
-					}
-				} else if (buildExtensions.includes(extension)) {
-					if (
-						options &&
-						(options.inline === true ||
-							(typeof options.inline === 'object' &&
-								options.inline?.js === true))
-					) {
-						files.delete(file);
-
-						toChangeAttributes.push((rewriter: HTMLRewriter) => {
-							rewriter.on(selector, {
-								async element(el) {
-									const contentToStringThing = await contentToString(
-										details.content,
-									);
-									let content: string;
-									if (details.content === undefined)
-										content = await file.text();
-									else content = await contentToString(details.content);
-									content = content.replaceAll(/(<)(\/script>)/g, '\\x3C$2');
-
-									el.removeAttribute('src');
-									el.setInnerContent(content, {
-										html: true,
-									});
-								},
-							});
-						});
-					}
-				} else {
-					files.set(file, {
-						...details,
-						hash: Bun.hash(await file.arrayBuffer(), 1)
-							.toString(16)
-							.slice(0, 8),
-						kind: 'asset',
 					});
 				}
+				continue;
 			}
+			if (buildExtensions.includes(extension)) {
+				if (
+					options &&
+					(options.inline === true ||
+						(typeof options.inline === 'object' && options.inline?.js === true))
+				) {
+					files.delete(file);
+
+					toChangeAttributes.push((rewriter: HTMLRewriter) => {
+						rewriter.on(selector, {
+							async element(el) {
+								const contentToStringThing = await contentToString(
+									details.content,
+								);
+								let content: string;
+								if (details.content === undefined) content = await file.text();
+								else content = await contentToString(details.content);
+								content = content.replaceAll(/(<)(\/script>)/g, '\\x3C$2');
+
+								el.removeAttribute('src');
+								el.setInnerContent(content, {
+									html: true,
+								});
+							},
+						});
+					});
+				}
+				continue;
+			}
+			files.set(file, {
+				...details,
+				hash: Bun.hash(await file.arrayBuffer(), 1)
+					.toString(16)
+					.slice(0, 8),
+				kind: 'asset',
+			});
 		}
 	}
 
@@ -827,11 +826,11 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 	return {
 		name: 'bun-plugin-html',
 		async setup(build) {
-			build.onLoad({ filter: /\.(html|htm)$/ }, async (args) => {
-				throw new Error(
-					'bun-plugin-html does not support output information at this time.',
-				);
-			});
+			// build.onLoad({ filter: /\.(html|htm)$/ }, async (args) => {
+			// 	throw new Error(
+			// 		'bun-plugin-html does not support output information at this time.',
+			// 	);
+			// });
 
 			const htmlOptions = options?.minifyOptions ?? defaultMinifyOptions;
 
@@ -960,8 +959,9 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 				attributesToChange.push((rewriter, fileLocation) => {
 					rewriter.on(selector, {
 						element(el) {
-							if (el.getAttribute(attribute.name) === null || !file.name)
+							if (el.getAttribute(attribute.name) === null || !file.name) {
 								return;
+							}
 
 							let filePath = path.relative(
 								path.dirname(fileLocation),
