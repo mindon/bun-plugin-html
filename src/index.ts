@@ -826,11 +826,11 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 	return {
 		name: 'bun-plugin-html',
 		async setup(build) {
-			// build.onLoad({ filter: /\.(html|htm)$/ }, async (args) => {
-			// 	throw new Error(
-			// 		'bun-plugin-html does not support output information at this time.',
-			// 	);
-			// });
+			build.onLoad({ filter: /\.(html|htm)$/ }, async (args) => {
+				throw new Error(
+					'bun-plugin-html does not support output information at this time.',
+				);
+			});
 
 			const htmlOptions = options?.minifyOptions ?? defaultMinifyOptions;
 
