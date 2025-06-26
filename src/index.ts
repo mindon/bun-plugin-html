@@ -172,6 +172,13 @@ async function getAllFiles(
 			}
 
 			if (!attributeName || !attributeValue || isURL(attributeValue)) return;
+			const pathExtraTail = attributeValue.match(/[?#]/);
+			let suffix = '';
+			if (pathExtraTail?.index) {
+				// with extra query or hash
+				suffix = attributeValue.substring(pathExtraTail.index) + suffix;
+				attributeValue = attributeValue.substring(0, pathExtraTail.index);
+			}
 			const resolvedPath = path.resolve(path.dirname(filePath), attributeValue);
 			const extension = path.parse(resolvedPath).ext;
 			if (options?.excludeExtensions?.includes(extension)) return;
@@ -179,7 +186,7 @@ async function getAllFiles(
 
 			if (!(await file.exists())) {
 				fileText = fileText.replace(/\t/g, '	');
-				const search = `${attributeName}="${attributeValue}"`;
+				const search = `${attributeName}="${attributeValue}${suffix}"`;
 				const line = returnLineNumberOfOccurance(fileText, search);
 				const columnNumber =
 					getColumnNumber(
@@ -205,7 +212,7 @@ async function getAllFiles(
 					kind: 'chunk',
 					attribute: {
 						name: attributeName,
-						value: attributeValue,
+						value: `${attributeValue}${suffix}`,
 					},
 					hash,
 					originalPath: resolvedPath,
@@ -293,12 +300,10 @@ async function forJsFiles(
 	const jsFiles = getExtensionFiles(files, buildExtensions);
 	for (const item of jsFiles) files.delete(item.file);
 
-	if (build.config.experimentalCss) {
-		const cssFiles = await forStyleFiles(options, build, htmlOptions, files);
-		if (cssFiles) {
-			for (const file of cssFiles) {
-				jsFiles.push(file);
-			}
+	const cssFiles = await forStyleFiles(options, build, htmlOptions, files);
+	if (cssFiles) {
+		for (const file of cssFiles) {
+			jsFiles.push(file);
 		}
 	}
 
@@ -461,9 +466,13 @@ async function forJsFiles(
 		for (const output of result.outputs) {
 			let outputText = await output.text();
 			if (/\.js$/.test(output.path)) {
-				if (/css\`|html\`/.test(outputText)) {
-					const result = minifyHTMLLiterals(outputText);
-					outputText = result?.code || outputText;
+				if (/css\`|html\`|svg\`/.test(outputText)) {
+					try {
+						const result = minifyHTMLLiterals(outputText);
+						outputText = result?.code || outputText;
+					} catch (err) {
+						console.error(entrypoint, err);
+					}
 				}
 
 				if (build.config.minify) {
@@ -549,19 +558,10 @@ async function forStyleFiles(
 			content = cssMinifier(content);
 		}
 
-		if (!build.config.experimentalCss)
-			files.set(file, {
-				content,
-				attribute: item.details.attribute,
-				kind: item.details.kind,
-				hash: Bun.hash(content, 1).toString(16).slice(0, 8),
-				originalPath: originalPath,
-				htmlImporter: item.details.htmlImporter,
-			});
-		else files.delete(file);
+		files.delete(file);
 	}
 
-	if (build.config.experimentalCss) return cssFiles;
+	return cssFiles;
 }
 
 interface NamedAs {
@@ -826,12 +826,6 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 	return {
 		name: 'bun-plugin-html',
 		async setup(build) {
-			build.onLoad({ filter: /\.(html|htm)$/ }, async (args) => {
-				throw new Error(
-					'bun-plugin-html does not support output information at this time.',
-				);
-			});
-
 			const htmlOptions = options?.minifyOptions ?? defaultMinifyOptions;
 
 			const excluded = options?.excludeSelectors
@@ -858,8 +852,7 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 			}
 
 			await forJsFiles(options, build, files, buildExtensions, htmlOptions);
-			if (!build.config.experimentalCss)
-				await forStyleFiles(options, build, htmlOptions, files);
+			await forStyleFiles(options, build, htmlOptions, files);
 
 			const attributesToChange = await processHtmlFiles(
 				options,
