@@ -169,6 +169,13 @@ async function getAllFiles(
 			}
 
 			if (!attributeName || !attributeValue || isURL(attributeValue)) return;
+			const pathExtraTail = attributeValue.match(/[?#]/);
+			let suffix = '';
+			if (pathExtraTail?.index) {
+				// with extra query or hash
+				suffix = attributeValue.substring(pathExtraTail.index) + suffix;
+				attributeValue = attributeValue.substring(0, pathExtraTail.index);
+			}
 			const resolvedPath = path.resolve(path.dirname(filePath), attributeValue);
 			const extension = path.parse(resolvedPath).ext;
 			if (options?.excludeExtensions?.includes(extension)) return;
@@ -176,7 +183,7 @@ async function getAllFiles(
 
 			if (!(await file.exists())) {
 				fileText = fileText.replace(/\t/g, '	');
-				const search = `${attributeName}="${attributeValue}"`;
+				const search = `${attributeName}="${attributeValue}${suffix}"`;
 				const line = returnLineNumberOfOccurance(fileText, search);
 				const columnNumber =
 					getColumnNumber(
@@ -202,7 +209,7 @@ async function getAllFiles(
 					kind: 'chunk',
 					attribute: {
 						name: attributeName,
-						value: attributeValue,
+						value: `${attributeValue}${suffix}`,
 					},
 					hash,
 					originalPath: resolvedPath,
@@ -290,12 +297,10 @@ async function forJsFiles(
 	const jsFiles = getExtensionFiles(files, buildExtensions);
 	for (const item of jsFiles) files.delete(item.file);
 
-	if (build.config.experimentalCss) {
-		const cssFiles = await forStyleFiles(options, build, htmlOptions, files);
-		if (cssFiles) {
-			for (const file of cssFiles) {
-				jsFiles.push(file);
-			}
+	const cssFiles = await forStyleFiles(options, build, htmlOptions, files);
+	if (cssFiles) {
+		for (const file of cssFiles) {
+			jsFiles.push(file);
 		}
 	}
 
@@ -523,19 +528,10 @@ async function forStyleFiles(
 			content = cssMinifier(content);
 		}
 
-		if (!build.config.experimentalCss)
-			files.set(file, {
-				content,
-				attribute: item.details.attribute,
-				kind: item.details.kind,
-				hash: Bun.hash(content, 1).toString(16).slice(0, 8),
-				originalPath: originalPath,
-				htmlImporter: item.details.htmlImporter,
-			});
-		else files.delete(file);
+		files.delete(file);
 	}
 
-	if (build.config.experimentalCss) return cssFiles;
+	return cssFiles;
 }
 
 interface NamedAs {
@@ -790,6 +786,8 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 						const pathStrDir = path.parse(path.join(hostDir, pathString)).dir;
 						if (pathStrDir !== originDir) continue; // same dir
 						newPath = path.relative(hostDir, newPath);
+					} else if(/^.\//.test(pathString) && !/^.\//.test(newPath)) {
+            newPath = `./${newPath}`;
 					}
 					content = content.replace(pathStrCtx, `${prefix}${newPath}${suffix}`);
 				}
