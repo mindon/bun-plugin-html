@@ -5,7 +5,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path, { resolve } from 'node:path';
 import * as esbuild from 'esbuild';
-import { minifyHTMLLiterals } from 'minify-html-literals';
+// import { minifyHTMLLiterals } from 'minify-html-literals';
+import minifyHTML from '@lit-labs/rollup-plugin-minify-html-literals';
 
 import {
 	type BuildArtifact,
@@ -40,6 +41,14 @@ export type File = {
 	file: BunFile;
 	details: FileDetails;
 };
+
+const opts: any = {
+     minifyCSS: true,
+     minifyJS: true,
+     minifyHTML: true,
+   };
+minifyHTML(opts);
+const { minifyHTMLLiterals } = opts;
 
 export type BunPluginHTMLOptions = {
 	/**
@@ -815,6 +824,8 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 						const pathStrDir = path.parse(path.join(hostDir, pathString)).dir;
 						if (pathStrDir !== originDir) continue; // same dir
 						newPath = path.relative(hostDir, newPath);
+					} else if(/^.\//.test(pathString) && !/^.\//.test(newPath)) {
+            newPath = `./${newPath}`;
 					}
 					content = content.replace(pathStrCtx, `${prefix}${newPath}${suffix}`);
 				}
