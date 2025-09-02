@@ -411,12 +411,12 @@ async function forJsFiles(
 								}
 							}
 
-								external = true;
-								toReplacePaths.push({
-									from: args.importer,
-									resolved,
-									path: args.path,
-								});
+							external = args.importer.indexOf('node_modules') === -1;
+							toReplacePaths.push({
+								from: args.importer,
+								resolved,
+								path: args.path,
+							});
 						}
 
 						return {
@@ -449,6 +449,8 @@ async function forJsFiles(
 
 	const entrypointToOutput: Map<string, string> = new Map();
 	for (const [index, entrypoint] of entrypoints.entries()) {
+    const p = path.parse(entrypoint);
+    const minifyOpt = build.config.minify && (!/\.(ts|js)$/i.test(p.ext));
 		const result = await Bun.build({
 			...build.config,
 			entrypoints: [entrypoint],
@@ -462,7 +464,7 @@ async function forJsFiles(
 					(plugin) => plugin.name !== 'bun-plugin-html',
 				),
 			],
-			minify: false,
+			minify: minifyOpt,
 			root: build.config.root || commonPath,
 		});
 
