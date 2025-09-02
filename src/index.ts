@@ -411,14 +411,12 @@ async function forJsFiles(
 								}
 							}
 
-							if (build.config.splitting) {
 								external = true;
 								toReplacePaths.push({
 									from: args.importer,
 									resolved,
 									path: args.path,
 								});
-							}
 						}
 
 						return {
@@ -837,6 +835,12 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 	return {
 		name: 'bun-plugin-html',
 		async setup(build) {
+			build.onLoad({ filter: /\.(html|htm)$/ }, async (args) => {
+				throw new Error(
+					'bun-plugin-html does not support output information at this time.',
+				);
+			});
+
 			const htmlOptions = options?.minifyOptions ?? defaultMinifyOptions;
 
 			const excluded = options?.excludeSelectors
@@ -863,7 +867,6 @@ const html = (options?: BunPluginHTMLOptions): BunPlugin => {
 			}
 
 			await forJsFiles(options, build, files, buildExtensions, htmlOptions);
-			await forStyleFiles(options, build, htmlOptions, files);
 
 			const attributesToChange = await processHtmlFiles(
 				options,
